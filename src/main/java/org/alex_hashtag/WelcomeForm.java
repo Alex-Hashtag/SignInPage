@@ -14,7 +14,7 @@ public class WelcomeForm extends JFrame {
 
         adminBtn.addActionListener(e -> {
             if (user.isAdmin()) {
-                new AdminForm();
+                new AdminForm(user);
             } else {
                 JOptionPane.showMessageDialog(this, "You are not an admin.");
             }

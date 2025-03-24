@@ -20,7 +20,8 @@ public class UserCache {
                         rs.getString("username"),
                         rs.getString("salt"),
                         rs.getString("hash"),
-                        rs.getString("role")
+                        rs.getString("role"),
+                        rs.getTimestamp("registration_date").toLocalDateTime() // 🆕
                 );
                 cache.put(user.username, user);
             }

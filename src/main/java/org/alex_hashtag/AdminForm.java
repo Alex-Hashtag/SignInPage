@@ -1,70 +1,119 @@
 package org.alex_hashtag;
 
 import javax.swing.*;
+import javax.swing.event.TableModelEvent;
 import javax.swing.table.*;
 import java.awt.*;
 import java.sql.*;
-import java.util.Vector;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AdminForm extends JFrame {
-    public AdminForm() {
-        setTitle("Admin Panel");
-        setSize(700, 400);
+    private final User currentUser;
+    private final DefaultTableModel model;
+    private final JTable table;
+
+    public AdminForm(User currentUser) {
+        this.currentUser = currentUser;
+
+        setTitle("Admin Panel - Logged in as: " + currentUser.username);
+        setSize(800, 500);
         setLocationRelativeTo(null);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
 
-        JTabbedPane tabs = new JTabbedPane();
+        model = new DefaultTableModel(new String[]{"ID", "Email", "Role", "Registered"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                int id = (int) getValueAt(row, 0);
+                // Prevent editing ID or Registration Date
+                if (column == 0 || column == 3) return false;
+                // Prevent self-role change
+                if (column == 2 && id == currentUser.id) return false;
+                return true;
+            }
+        };
 
-        tabs.add("Admins", createTablePanel("admin"));
-        tabs.add("Users", createTablePanel("user"));
+        table = new JTable(model);
+        table.setFillsViewportHeight(true);
+        table.setRowHeight(24);
+        table.setAutoCreateRowSorter(true);
 
-        add(tabs);
+        loadUsers();
+
+        JButton saveBtn = new JButton("💾 Save Changes");
+        saveBtn.addActionListener(e -> saveToDatabase());
+
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        bottomPanel.add(saveBtn);
+
+        add(new JScrollPane(table), BorderLayout.CENTER);
+        add(bottomPanel, BorderLayout.SOUTH);
         setVisible(true);
     }
 
-    private JPanel createTablePanel(String roleFilter) {
-        DefaultTableModel model = new DefaultTableModel(new String[]{"id", "username", "role"}, 0);
-        JTable table = new JTable(model);
-        loadUsers(roleFilter, model);
+    private void loadUsers() {
+        model.setRowCount(0); // clear
 
-        JButton saveBtn = new JButton("Save Changes");
-        saveBtn.addActionListener(e -> saveToDatabase(table));
-
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        panel.add(saveBtn, BorderLayout.SOUTH);
-        return panel;
-    }
-
-    private void loadUsers(String role, DefaultTableModel model) {
         try (var conn = Database.getConnection();
-             var stmt = conn.prepareStatement("SELECT id, username, role FROM users WHERE role = ?")) {
-            stmt.setString(1, role);
-            var rs = stmt.executeQuery();
+             var stmt = conn.prepareStatement("SELECT id, username, role, registration_date FROM users");
+             var rs = stmt.executeQuery()) {
+
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
             while (rs.next()) {
-                Vector<Object> row = new Vector<>();
-                row.add(rs.getInt("id"));
-                row.add(rs.getString("username"));
-                row.add(rs.getString("role"));
-                model.addRow(row);
+                int id = rs.getInt("id");
+                String email = rs.getString("username");
+                String role = rs.getString("role");
+                String date = rs.getTimestamp("registration_date").toLocalDateTime().format(fmt);
+
+                model.addRow(new Object[]{id, email, role, date});
             }
-        } catch (Exception ex) {
-            ex.printStackTrace();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Failed to load users: " + e.getMessage());
         }
     }
 
-    private void saveToDatabase(JTable table) {
+    private void saveToDatabase() {
+        List<Object[]> updates = new ArrayList<>();
+
+        for (int i = 0; i < model.getRowCount(); i++) {
+            int id = (int) model.getValueAt(i, 0);
+            String email = model.getValueAt(i, 1).toString().trim();
+            String role = model.getValueAt(i, 2).toString().trim().toLowerCase();
+
+            // Email validation
+            if (!email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+                JOptionPane.showMessageDialog(this, "Invalid email format at row " + (i + 1));
+                return;
+            }
+
+            // Role validation
+            if (!role.equals("admin") && !role.equals("user")) {
+                JOptionPane.showMessageDialog(this, "Invalid role at row " + (i + 1) + ". Must be 'admin' or 'user'");
+                return;
+            }
+
+            updates.add(new Object[]{email, role, id});
+        }
+
         try (var conn = Database.getConnection();
              var stmt = conn.prepareStatement("UPDATE users SET username = ?, role = ? WHERE id = ?")) {
-            for (int i = 0; i < table.getRowCount(); i++) {
-                stmt.setString(1, table.getValueAt(i, 1).toString());
-                stmt.setString(2, table.getValueAt(i, 2).toString());
-                stmt.setInt(3, (Integer) table.getValueAt(i, 0));
+
+            for (Object[] update : updates) {
+                stmt.setString(1, (String) update[0]);
+                stmt.setString(2, (String) update[1]);
+                stmt.setInt(3, (int) update[2]);
                 stmt.addBatch();
             }
+
             stmt.executeBatch();
-            JOptionPane.showMessageDialog(this, "Changes saved.");
+            JOptionPane.showMessageDialog(this, "✅ Changes saved.");
+            loadUsers(); // reload updated data
+
         } catch (Exception e) {
             e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to save: " + e.getMessage());
         }
     }
 }

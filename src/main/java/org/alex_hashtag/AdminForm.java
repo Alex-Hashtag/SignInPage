@@ -1,119 +1,342 @@
 package org.alex_hashtag;
 
+import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
+import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.fife.ui.rtextarea.RTextScrollPane;
+
+import javax.imageio.ImageIO;
 import javax.swing.*;
-import javax.swing.event.TableModelEvent;
-import javax.swing.table.*;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.*;
 import java.sql.*;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
 
 public class AdminForm extends JFrame {
     private final User currentUser;
     private final DefaultTableModel model;
     private final JTable table;
 
+    private JLabel imageLabel = new JLabel("No Image", SwingConstants.CENTER);
+    private JEditorPane bioPreview = new JEditorPane();
+    private RSyntaxTextArea bioEditor = new RSyntaxTextArea();
+    private JComboBox<String> syntaxSelector;
+    private CardLayout bioLayout = new CardLayout();
+    private JPanel bioCardPanel;
+
+    private File newImageFile = null;
+    private int selectedUserId = -1;
+
+    private final int pageSize = 10;
+    private int currentPage = 0;
+    private int totalUsers = 0;
+    private Connection conn;
+
     public AdminForm(User currentUser) {
         this.currentUser = currentUser;
-
-        setTitle("Admin Panel - Logged in as: " + currentUser.username);
-        setSize(800, 500);
+        setTitle("Admin Panel - " + currentUser.username);
+        setSize(1100, 700);
         setLocationRelativeTo(null);
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLayout(new BorderLayout());
 
         model = new DefaultTableModel(new String[]{"ID", "Email", "Role", "Registered"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
+            public boolean isCellEditable(int row, int col) {
                 int id = (int) getValueAt(row, 0);
-                // Prevent editing ID or Registration Date
-                if (column == 0 || column == 3) return false;
-                // Prevent self-role change
-                if (column == 2 && id == currentUser.id) return false;
-                return true;
+                return col != 0 && col != 3 && id != currentUser.id;
             }
         };
 
         table = new JTable(model);
-        table.setFillsViewportHeight(true);
         table.setRowHeight(24);
-        table.setAutoCreateRowSorter(true);
 
-        loadUsers();
+        try {
+            conn = Database.getConnection();
+            totalUsers = getUserCount();
+        } catch (Exception e) {
+            showError("Database error: " + e.getMessage());
+            return;
+        }
 
-        JButton saveBtn = new JButton("💾 Save Changes");
-        saveBtn.addActionListener(e -> saveToDatabase());
+        loadPage();
+        table.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) showUserDetails();
+        });
 
-        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JScrollPane tableScroll = new JScrollPane(table);
+        add(tableScroll, BorderLayout.CENTER);
+
+        // Right Panel
+        JPanel rightPanel = new JPanel(new BorderLayout(10, 10));
+        rightPanel.setBorder(BorderFactory.createTitledBorder("User Details"));
+
+        imageLabel.setPreferredSize(new Dimension(150, 150));
+        rightPanel.add(imageLabel, BorderLayout.NORTH);
+
+        JButton uploadImageBtn = new JButton("Upload Image");
+        uploadImageBtn.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+                newImageFile = chooser.getSelectedFile();
+                try {
+                    BufferedImage img = ImageIO.read(newImageFile);
+                    Image scaled = img.getScaledInstance(150, 150, Image.SCALE_SMOOTH);
+                    imageLabel.setIcon(new ImageIcon(scaled));
+                    imageLabel.setText("");
+                } catch (IOException ex) {
+                    showError("Could not preview image.");
+                }
+            }
+        });
+
+        // Bio components
+        bioPreview.setEditable(false);
+        bioPreview.setContentType("text/html");
+
+        bioEditor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_MARKDOWN);
+        bioEditor.setCodeFoldingEnabled(true);
+        JScrollPane previewScroll = new JScrollPane(bioPreview);
+        RTextScrollPane editorScroll = new RTextScrollPane(bioEditor);
+
+        bioCardPanel = new JPanel(bioLayout);
+        bioCardPanel.add(previewScroll, "preview");
+        bioCardPanel.add(editorScroll, "editor");
+
+        syntaxSelector = new JComboBox<>(new String[]{"Markdown", "HTML", "Plain Text"});
+        syntaxSelector.setVisible(false);
+        syntaxSelector.addActionListener(e -> switchSyntax((String) syntaxSelector.getSelectedItem()));
+
+        JButton editBioBtn = new JButton("✏ Edit Bio");
+        editBioBtn.addActionListener(e -> {
+            if (bioCardPanel.isVisible() && bioLayout != null) {
+                if ("preview".equals(getCurrentCard())) {
+                    syntaxSelector.setVisible(true);
+                    bioLayout.show(bioCardPanel, "editor");
+                    editBioBtn.setText("💾 Save Bio");
+                } else {
+                    saveBio();
+                    syntaxSelector.setVisible(false);
+                    bioLayout.show(bioCardPanel, "preview");
+                    editBioBtn.setText("✏ Edit Bio");
+                }
+            }
+        });
+
+        JPanel bioControlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        bioControlPanel.add(editBioBtn);
+        bioControlPanel.add(syntaxSelector);
+
+        JPanel bioPanel = new JPanel(new BorderLayout());
+        bioPanel.add(bioControlPanel, BorderLayout.NORTH);
+        bioPanel.add(bioCardPanel, BorderLayout.CENTER);
+        rightPanel.add(bioPanel, BorderLayout.CENTER);
+        rightPanel.add(uploadImageBtn, BorderLayout.SOUTH);
+
+        add(rightPanel, BorderLayout.EAST);
+
+        // Bottom Panel
+        JButton saveBtn = new JButton("💾 Save All Changes");
+        saveBtn.addActionListener(e -> saveChanges());
+
+        JButton prevBtn = new JButton("⬅");
+        JButton nextBtn = new JButton("➡");
+
+        JLabel pageLabel = new JLabel();
+        JPanel bottomPanel = new JPanel();
+        bottomPanel.add(prevBtn);
+        bottomPanel.add(pageLabel);
+        bottomPanel.add(nextBtn);
         bottomPanel.add(saveBtn);
 
-        add(new JScrollPane(table), BorderLayout.CENTER);
+        prevBtn.addActionListener(e -> {
+            if (currentPage > 0) {
+                currentPage--;
+                loadPage();
+            }
+        });
+
+        nextBtn.addActionListener(e -> {
+            if ((currentPage + 1) * pageSize < totalUsers) {
+                currentPage++;
+                loadPage();
+            }
+        });
+
         add(bottomPanel, BorderLayout.SOUTH);
+        updatePageLabel(pageLabel);
+
         setVisible(true);
     }
 
-    private void loadUsers() {
-        model.setRowCount(0); // clear
-
-        try (var conn = Database.getConnection();
-             var stmt = conn.prepareStatement("SELECT id, username, role, registration_date FROM users");
-             var rs = stmt.executeQuery()) {
-
-            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
-            while (rs.next()) {
-                int id = rs.getInt("id");
-                String email = rs.getString("username");
-                String role = rs.getString("role");
-                String date = rs.getTimestamp("registration_date").toLocalDateTime().format(fmt);
-
-                model.addRow(new Object[]{id, email, role, date});
-            }
+    private void saveBio() {
+        try {
+            String updated = bioEditor.getText();
+            PreparedStatement stmt = conn.prepareStatement("UPDATE users SET profile_bio = ? WHERE id = ?");
+            stmt.setString(1, updated);
+            stmt.setInt(2, selectedUserId);
+            stmt.executeUpdate();
+            showMessage("✅ Bio updated.");
+            showUserDetails();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, "Failed to load users: " + e.getMessage());
+            showError("Error saving bio: " + e.getMessage());
         }
     }
 
-    private void saveToDatabase() {
-        List<Object[]> updates = new ArrayList<>();
+    private void switchSyntax(String type) {
+        if (type == null) return;
 
-        for (int i = 0; i < model.getRowCount(); i++) {
-            int id = (int) model.getValueAt(i, 0);
-            String email = model.getValueAt(i, 1).toString().trim();
-            String role = model.getValueAt(i, 2).toString().trim().toLowerCase();
-
-            // Email validation
-            if (!email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
-                JOptionPane.showMessageDialog(this, "Invalid email format at row " + (i + 1));
-                return;
-            }
-
-            // Role validation
-            if (!role.equals("admin") && !role.equals("user")) {
-                JOptionPane.showMessageDialog(this, "Invalid role at row " + (i + 1) + ". Must be 'admin' or 'user'");
-                return;
-            }
-
-            updates.add(new Object[]{email, role, id});
+        switch (type.toLowerCase()) {
+            case "markdown" -> bioEditor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_MARKDOWN);
+            case "html" -> bioEditor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_HTML);
+            default -> bioEditor.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_NONE);
         }
+    }
 
-        try (var conn = Database.getConnection();
-             var stmt = conn.prepareStatement("UPDATE users SET username = ?, role = ? WHERE id = ?")) {
+    private void showUserDetails() {
+        int row = table.getSelectedRow();
+        if (row < 0) return;
 
-            for (Object[] update : updates) {
-                stmt.setString(1, (String) update[0]);
-                stmt.setString(2, (String) update[1]);
-                stmt.setInt(3, (int) update[2]);
+        int modelRow = table.convertRowIndexToModel(row);
+        selectedUserId = (int) model.getValueAt(modelRow, 0);
+
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT profile_image, profile_bio FROM users WHERE id = ?")) {
+            stmt.setInt(1, selectedUserId);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                byte[] imgBytes = rs.getBytes("profile_image");
+                String bio = rs.getString("profile_bio");
+
+                if (imgBytes != null) {
+                    ImageIcon icon = new ImageIcon(imgBytes);
+                    Image scaled = icon.getImage().getScaledInstance(150, 150, Image.SCALE_SMOOTH);
+                    imageLabel.setIcon(new ImageIcon(scaled));
+                    imageLabel.setText("");
+                } else {
+                    imageLabel.setIcon(null);
+                    imageLabel.setText("No Image");
+                }
+
+                bioEditor.setText(bio == null ? "" : bio);
+                String syntax = ((String) syntaxSelector.getSelectedItem()).toLowerCase();
+                switch (syntax) {
+                    case "markdown" -> bioPreview.setText("<html><body>" + renderMarkdownToHtml(bio) + "</body></html>");
+                    case "html" -> bioPreview.setText(bio);
+                    default -> bioPreview.setText("<pre>" + escapeHtml(bio) + "</pre>");
+                }
+                bioLayout.show(bioCardPanel, "preview");
+            }
+
+        } catch (Exception e) {
+            showError("Failed to load user: " + e.getMessage());
+        }
+    }
+
+    private void saveChanges() {
+        try (PreparedStatement stmt = conn.prepareStatement("UPDATE users SET username = ?, role = ?, profile_image = ? WHERE id = ?")) {
+            for (int i = 0; i < model.getRowCount(); i++) {
+                int id = (int) model.getValueAt(i, 0);
+                String email = model.getValueAt(i, 1).toString().trim();
+                String role = model.getValueAt(i, 2).toString().trim().toLowerCase();
+
+                if (!email.matches("^[^@]+@[^@]+\\.[^@]+$")) {
+                    showError("Invalid email at row " + (i + 1));
+                    return;
+                }
+
+                if (!(role.equals("admin") || role.equals("user"))) {
+                    showError("Invalid role at row " + (i + 1));
+                    return;
+                }
+
+                if (id == currentUser.id && !role.equals(currentUser.role)) {
+                    showError("You can't change your own role.");
+                    return;
+                }
+
+                stmt.setString(1, email);
+                stmt.setString(2, role);
+
+                if (selectedUserId == id && newImageFile != null) {
+                    stmt.setBinaryStream(3, new FileInputStream(newImageFile), newImageFile.length());
+                } else {
+                    stmt.setNull(3, Types.BLOB);
+                }
+
+                stmt.setInt(4, id);
                 stmt.addBatch();
             }
 
             stmt.executeBatch();
-            JOptionPane.showMessageDialog(this, "✅ Changes saved.");
-            loadUsers(); // reload updated data
-
+            showMessage("✅ Changes saved.");
+            loadPage();
         } catch (Exception e) {
-            e.printStackTrace();
-            JOptionPane.showMessageDialog(this, "Failed to save: " + e.getMessage());
+            showError("Error saving: " + e.getMessage());
         }
+    }
+
+    private void loadPage() {
+        model.setRowCount(0);
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT id, username, role, registration_date FROM users ORDER BY id ASC LIMIT ? OFFSET ?")) {
+            stmt.setInt(1, pageSize);
+            stmt.setInt(2, currentPage * pageSize);
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                model.addRow(new Object[]{
+                        rs.getInt("id"),
+                        rs.getString("username"),
+                        rs.getString("role"),
+                        rs.getTimestamp("registration_date")
+                });
+            }
+        } catch (Exception e) {
+            showError("Load error: " + e.getMessage());
+        }
+    }
+
+    private int getUserCount() {
+        try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM users");
+             ResultSet rs = stmt.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private void updatePageLabel(JLabel label) {
+        int totalPages = (int) Math.ceil(totalUsers / (double) pageSize);
+        label.setText("Page " + (currentPage + 1) + " of " + totalPages);
+    }
+
+    private String getCurrentCard() {
+        for (Component comp : bioCardPanel.getComponents()) {
+            if (comp.isVisible()) return bioCardPanel.getLayout().toString();
+        }
+        return "preview";
+    }
+
+    private void showError(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "❌ Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void showMessage(String msg) {
+        JOptionPane.showMessageDialog(this, msg);
+    }
+
+    private String renderMarkdownToHtml(String md) {
+        if (md == null) return "";
+        String html = md;
+        html = html.replaceAll("(?m)^### (.*?)$", "<h3>$1</h3>");
+        html = html.replaceAll("(?m)^## (.*?)$", "<h2>$1</h2>");
+        html = html.replaceAll("(?m)^# (.*?)$", "<h1>$1</h1>");
+        html = html.replaceAll("(?m)^- (.*?)$", "<ul><li>$1</li></ul>");
+        html = html.replaceAll("\\*\\*(.*?)\\*\\*", "<b>$1</b>");
+        html = html.replaceAll("\\*(.*?)\\*", "<i>$1</i>");
+        return html;
+    }
+
+    private String escapeHtml(String text) {
+        return text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 }

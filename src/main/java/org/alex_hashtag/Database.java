@@ -8,7 +8,7 @@ import java.security.NoSuchAlgorithmException;
 
 
 public class Database {
-    private static final String URL = "jdbc:mysql://localhost:3305/userdb";
+    private static final String URL = SecretManager.get("DATABASE_URL");
     private static final String USER = SecretManager.get("DATABASE_USERNAME");
     private static final String PASS = SecretManager.get("DATABASE_PASSWORD"); // Change this
 

@@ -21,7 +21,9 @@ public class UserCache {
                         rs.getString("salt"),
                         rs.getString("hash"),
                         rs.getString("role"),
-                        rs.getTimestamp("registration_date").toLocalDateTime() // 🆕
+                        rs.getTimestamp("registration_date").toLocalDateTime(),
+                        rs.getBytes("profile_image"), // 🆕
+                        rs.getString("profile_bio")   // 🆕
                 );
                 cache.put(user.username, user);
             }

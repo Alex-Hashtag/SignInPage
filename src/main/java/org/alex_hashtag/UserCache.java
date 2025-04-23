@@ -9,7 +9,8 @@ public class UserCache {
     public static Map<String, User> cache = new HashMap<>();
 
     public static void loadUsers() {
-        try (var conn = Database.getConnection();
+        var conn = Database.getConnection();
+        try (
              var stmt = conn.prepareStatement("SELECT * FROM users");
              var rs = stmt.executeQuery()) {
 

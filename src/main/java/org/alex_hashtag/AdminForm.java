@@ -12,6 +12,8 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.sql.*;
 
+import static org.alex_hashtag.MarkdownUtil.*;
+
 public class AdminForm extends JFrame {
     private final User currentUser;
     private final DefaultTableModel model;
@@ -23,6 +25,7 @@ public class AdminForm extends JFrame {
     private JComboBox<String> syntaxSelector;
     private CardLayout bioLayout = new CardLayout();
     private JPanel bioCardPanel;
+    private String currentCard = "preview"; // NEW: track current card
 
     private File newImageFile = null;
     private int selectedUserId = -1;
@@ -108,17 +111,17 @@ public class AdminForm extends JFrame {
 
         JButton editBioBtn = new JButton("✏ Edit Bio");
         editBioBtn.addActionListener(e -> {
-            if (bioCardPanel.isVisible() && bioLayout != null) {
-                if ("preview".equals(getCurrentCard())) {
-                    syntaxSelector.setVisible(true);
-                    bioLayout.show(bioCardPanel, "editor");
-                    editBioBtn.setText("💾 Save Bio");
-                } else {
-                    saveBio();
-                    syntaxSelector.setVisible(false);
-                    bioLayout.show(bioCardPanel, "preview");
-                    editBioBtn.setText("✏ Edit Bio");
-                }
+            if ("preview".equals(currentCard)) {
+                syntaxSelector.setVisible(true);
+                bioLayout.show(bioCardPanel, "editor");
+                currentCard = "editor";
+                editBioBtn.setText("💾 Save Bio");
+            } else {
+                saveBio();
+                syntaxSelector.setVisible(false);
+                bioLayout.show(bioCardPanel, "preview");
+                currentCard = "preview";
+                editBioBtn.setText("✏ Edit Bio");
             }
         });
 
@@ -176,9 +179,18 @@ public class AdminForm extends JFrame {
             stmt.setInt(2, selectedUserId);
             stmt.executeUpdate();
             showMessage("✅ Bio updated.");
-            showUserDetails();
+            updateBioPreview(updated); // Updated preview
         } catch (Exception e) {
             showError("Error saving bio: " + e.getMessage());
+        }
+    }
+
+    private void updateBioPreview(String bio) {
+        String syntax = ((String) syntaxSelector.getSelectedItem()).toLowerCase();
+        switch (syntax) {
+            case "markdown" -> bioPreview.setText("<html><body>" + renderMarkdownToHtml(bio) + "</body></html>");
+            case "html" -> bioPreview.setText(bio);
+            default -> bioPreview.setText("<pre>" + escapeHtml(bio) + "</pre>");
         }
     }
 
@@ -217,13 +229,9 @@ public class AdminForm extends JFrame {
                 }
 
                 bioEditor.setText(bio == null ? "" : bio);
-                String syntax = ((String) syntaxSelector.getSelectedItem()).toLowerCase();
-                switch (syntax) {
-                    case "markdown" -> bioPreview.setText("<html><body>" + renderMarkdownToHtml(bio) + "</body></html>");
-                    case "html" -> bioPreview.setText(bio);
-                    default -> bioPreview.setText("<pre>" + escapeHtml(bio) + "</pre>");
-                }
+                updateBioPreview(bio == null ? "" : bio);
                 bioLayout.show(bioCardPanel, "preview");
+                currentCard = "preview";
             }
 
         } catch (Exception e) {
@@ -307,36 +315,11 @@ public class AdminForm extends JFrame {
         label.setText("Page " + (currentPage + 1) + " of " + totalPages);
     }
 
-    private String getCurrentCard() {
-        for (Component comp : bioCardPanel.getComponents()) {
-            if (comp.isVisible()) return bioCardPanel.getLayout().toString();
-        }
-        return "preview";
-    }
-
     private void showError(String msg) {
         JOptionPane.showMessageDialog(this, msg, "❌ Error", JOptionPane.ERROR_MESSAGE);
     }
 
     private void showMessage(String msg) {
         JOptionPane.showMessageDialog(this, msg);
-    }
-
-    private String renderMarkdownToHtml(String md) {
-        if (md == null) return "";
-        String html = md;
-        html = html.replaceAll("(?m)^### (.*?)$", "<h3>$1</h3>");
-        html = html.replaceAll("(?m)^## (.*?)$", "<h2>$1</h2>");
-        html = html.replaceAll("(?m)^# (.*?)$", "<h1>$1</h1>");
-        html = html.replaceAll("(?m)^- (.*?)$", "<ul><li>$1</li></ul>");
-        html = html.replaceAll("\\*\\*(.*?)\\*\\*", "<b>$1</b>");
-        html = html.replaceAll("\\*(.*?)\\*", "<i>$1</i>");
-        return html;
-    }
-
-    private String escapeHtml(String text) {
-        return text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
     }
 }

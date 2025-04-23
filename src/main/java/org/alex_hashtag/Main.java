@@ -4,7 +4,9 @@ import com.formdev.flatlaf.FlatDarkLaf;
 
 import javax.swing.*;
 
-
+/**
+ * Main class of the application.
+ */
 public class Main {
     public static void main(String[] args) {
         // Set FlatLaf dark theme
@@ -14,7 +16,7 @@ public class Main {
             System.err.println("Failed to initialize FlatLaf: " + e.getMessage());
         }
 
-        // Launch the login form
-        SwingUtilities.invokeLater(() -> new LoginForm());
+        // Launch the welcome window
+        SwingUtilities.invokeLater(() -> new WelcomeWindow());
     }
 }

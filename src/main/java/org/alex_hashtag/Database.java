@@ -11,9 +11,21 @@ public class Database {
     private static final String URL = SecretManager.get("DATABASE_URL");
     private static final String USER = SecretManager.get("DATABASE_USERNAME");
     private static final String PASS = SecretManager.get("DATABASE_PASSWORD"); // Change this
+    private static final Connection connection;
 
-    public static Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(URL, USER, PASS);
+    static
+    {
+        try
+        {
+            connection = DriverManager.getConnection(URL, USER, PASS);
+        } catch (SQLException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static Connection getConnection(){
+        return connection;
     }
 
     public static String generateSalt() {

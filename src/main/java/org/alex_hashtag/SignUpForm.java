@@ -10,6 +10,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.nio.file.Files;
 
+import static org.alex_hashtag.MarkdownUtil.renderMarkdownToHtml;
+
 public class SignUpForm extends JFrame {
     private JTextField emailField;
     private JPasswordField passwordField;
@@ -130,11 +132,8 @@ public class SignUpForm extends JFrame {
         String text = bioEditor.getText();
         if ("Markdown".equals(syntaxSelector.getSelectedItem())) {
             // Very basic markdown-to-HTML (real parser optional)
-            String html = text.replaceAll("(?m)^# (.*?)$", "<h1>$1</h1>")
-                    .replaceAll("(?m)^## (.*?)$", "<h2>$1</h2>")
-                    .replaceAll("(?m)^- (.*?)$", "<li>$1</li>");
-            html = "<html><body>" + html + "</body></html>";
-            bioPreview.setText(html);
+            bioPreview.setText("<html><body>" + renderMarkdownToHtml(text) + "</body></html>");
+
         } else {
             bioPreview.setText(text);
         }
